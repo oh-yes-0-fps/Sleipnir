@@ -199,19 +199,33 @@ class RegularizedLDLT {
   /// The value of δ from the previous run of compute().
   Scalar m_prev_δ{0};
 
-  // Number of non-zeros in LHS.
-  int m_non_zeros = -1;
+  /// Cached structural sparsity pattern of the LHS last analyzed.
+  ///
+  /// Comparing nnz alone is insufficient: two matrices can share nnz with
+  /// completely different per-column distributions of non-zeros. Reusing a
+  /// stale symbolic factorization makes Eigen's factorize_preordered write
+  /// past the L buffers allocated for the previous pattern.
+  Eigen::Matrix<int, Eigen::Dynamic, 1> m_cached_outer;
+  Eigen::Matrix<int, Eigen::Dynamic, 1> m_cached_inner;
 
   /// Computes factorization of a sparse matrix.
   ///
   /// @param lhs Matrix to factorize.
   /// @return The factorization.
   SparseSolver& compute_sparse(const SparseMatrix& lhs) {
-    // Reanalize lhs's sparsity pattern if it changed
-    int non_zeros = lhs.nonZeros();
-    if (m_non_zeros != non_zeros) {
+    // Reanalyze lhs's sparsity pattern if the structural pattern changed.
+    const int outer_size = static_cast<int>(lhs.outerSize()) + 1;
+    const int inner_size = static_cast<int>(lhs.nonZeros());
+    Eigen::Map<const Eigen::Matrix<int, Eigen::Dynamic, 1>> outer{
+        lhs.outerIndexPtr(), outer_size};
+    Eigen::Map<const Eigen::Matrix<int, Eigen::Dynamic, 1>> inner{
+        lhs.innerIndexPtr(), inner_size};
+    if (m_cached_outer.size() != outer_size ||
+        m_cached_inner.size() != inner_size || m_cached_outer != outer ||
+        m_cached_inner != inner) {
       m_sparse_solver.analyzePattern(lhs);
-      m_non_zeros = non_zeros;
+      m_cached_outer = outer;
+      m_cached_inner = inner;
     }
 
     m_sparse_solver.factorize(lhs);
